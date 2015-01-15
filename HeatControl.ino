@@ -9,11 +9,13 @@
 #include <Wire.h>
 #include <DS1307RTC.h>
 #include <SoftwareSerial.h>
-#include <EEPROM.h>
+#include <EEPROMex.h>
+#include <EEPROMVar.h>
 #include <tmp102.h>
 
 const byte sensorAddress = 0x90;           // I2C address of the tmp102 sensor
 const unsigned long tempInterval = 15000;  // read temperature only every x ms
+const int pwmPin = 9;                      // Pin for PWM output to heating
 
 SoftwareSerial xbee(10, 11); // RX, TX
 int cmdRecvd = 0;            // is received Command complete?
@@ -33,6 +35,7 @@ void setup() {
   }
   thermometer->init(sensorAddress);
   thermometer->writeConf(TMP102_DEFAULT_CONF); // set default config
+  EEPROM.setMemPool(0, EEPROMSizeATmega328);
   
   xbee.println(F("HC connect")); // send status info
 }
