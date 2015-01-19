@@ -18,6 +18,11 @@
 #include <avr/wdt.h>
 #include "HeatControl.h"
 
+/*
+ * Define the standard settings and pins
+ *
+ */
+
 const byte sensorAddress = 0x90;           // I2C address of the tmp102 sensor
 const unsigned long tempInterval = 15000;  // read temperature only every x ms
 const int pwmPin = 9;                      // Pin for PWM output to heating
@@ -28,6 +33,11 @@ const int encoderBPin = A0;                // Pin B from rotary encoder
 const int encoderButtonPin = A2;           // Button Pin from rotary encoder
 const uint8_t menuItemsVisible = 3;        // how many items should/could be visible at a time
 const uint8_t menuItemHeight = 12;         // height of one menu item
+
+/*
+ * Definition of the variables
+ *
+ */
 
 SoftwareSerial xbee(xbeeRXPin, xbeeTXPin); // Pins for the serial xbee connection
 int cmdRecvd = 0;            // is received Command complete?
@@ -40,6 +50,11 @@ uint8_t previousSystemState = State::None; // previous state of the menu
 int16_t encMovement;
 int16_t encAbsolute;
 bool updateMenu = false;
+
+/*
+ * Initialize the objects
+ *
+ */
 
 tmp102 *thermometer = new tmp102(&Wire);
 ClickEncoder *encoder;
@@ -83,7 +98,52 @@ void renderMenuItem(const Menu::Item_t *mi, uint8_t pos) {
 
 // Name, Label, Next, Previous, Parent, Child, Callback
 MenuItem(miExit, "", Menu::NullItem, Menu::NullItem, Menu::NullItem, miSettings, menuExit);
-// ...
+  MenuItem(miSettings, "Einstellungen", miHolidayMode, Menu::NullItem, miExit, miSetDateTime, menuDummy);
+    MenuItem(miSetDateTime, "Datum/Uhrzeit einstellen", miStandbyTemp, Menu::NullItem, miSettings, miSetDate, menuDummy);
+      MenuItem(miSetDate, "Datum einstellen", miSetTime,      Menu::NullItem, miSetDateTime, Menu::NullItem, menuDummy);
+      MenuItem(miSetTime, "Zeit einstellen",  Menu::NullItem, miSetDate,      miSetDateTime, Menu::NullItem, menuDummy);
+    MenuItem(miStandbyTemp, "Standby-Temperatur", miDOWPattern, miSetDateTime, miSettings, Menu::NullItem, menuDummy);
+    MenuItem(miDOWPattern, "Schaltpunkte definieren", miSetHysterese, miStandbyTemp, miSettings, miMonday, menuDummy);
+      MenuItem(miMonday,    "Montag",     miTuesday,      Menu::NullItem, miDOWPattern, miMo1, menuDummy);
+        MenuItem(miMo1, "Schaltzeit 1", miMo2,          Menu::NullItem, miMonday, miMo1Begin, menuDummy);
+        MenuItem(miMo2, "Schaltzeit 2", Menu::NullItem, miMo1,          miMonday, miMo2Begin, menuDummy);
+      MenuItem(miTuesday,   "Dienstag",   miWednesday,    miMonday,       miDOWPattern, miTu1, menuDummy);
+        MenuItem(miTu1, "Schaltzeit 1", miTu2,          Menu::NullItem, miTuesday, miTu1Begin, menuDummy);
+        MenuItem(miTu2, "Schaltzeit 2", Menu::NullItem, miTu1,          miTuesday, muTu2Begin, menuDummy);
+      MenuItem(miWednesday, "Mittwoch",   miThursday,     miTuesday,      miDOWPattern, miWe1, menuDummy);
+        MenuItem(miWe1, "Schaltzeit 1", miWe2,          Menu::NullItem, miWednesday, miWe1Begin, menuDummy);
+        MenuItem(miWe2, "Schaltzeit 2", Menu::NullItem, miWe1,          miWednesday, miWe2Begin, menuDummy);
+      MenuItem(miThursday,  "Donnerstag", miFriday,       miWednesday,    miDOWPattern, miTh1, menuDummy);
+        MenuItem(miTh1, "Schaltzeit 1", miTh2,          Menu::NullItem, miThursday, miTh1Begin, menuDummy);
+        MenuItem(miTh2, "Schaltzeit 2", Menu::NullItem, miTh1,          miThursday, miTh2Begin, menuDummy);
+      MenuItem(miFriday,    "Freitag",    miSaturday,     miThursday,     miDOWPattern, miFr1, menuDummy);
+        MenuItem(miFr1, "Schaltzeit 1", miFr2,          Menu::NullItem, miFriday, miFr1Begin, menuDummy);
+        MenuItem(miFr2, "Schaltzeit 2", Menu::NullItem, miFr1,          miFriday, miFr2Begin, menuDummy);
+      MenuItem(miSaturday,  "Samstag",    miSunday,       miFriday,       miDOWPattern, miSa1, menuDummy);
+        MenuItem(miSa1, "Schaltzeit 1", miSa2,          Menu::NullItem, miSaturday, miSa1Begin, menuDummy);
+        MenuItem(miSa2, "Schaltzeit 2", Menu::NullItem, miSa1,          miSaturday, miSa2Begin, menuDummy);
+      MenuItem(miSunday,    "Sonntag",    Menu::NullItem, miSaturday,     miDOWPattern, miSu1, menuDummy);
+        MenuItem(miSu1, "Schaltzeit 1", miSu2,          Menu::NullItem, miSunday, miSu1Begin, menuDummy);
+        MenuItem(miSu2, "Schaltzeit 2", Menu::NullItem, miSu1,          miSunday, miSu2Begin, menuDummy);
+    MenuItem(miSetHysterese, "Hysterese einstellen", Menu::NullItem, miDOWPattern, miSettings, miHystTop, menuDummy);
+      MenuItem(miHystTop,    "Obere Grenze",  miHystBottom,   Menu::NullItem, miSetHysterese, Menu::NullItem, menuDummy);
+      MenuItem(miHystBottom, "Untere Grenze", Menu::NullItem, miHystTop,      miSetHysterese, Menu::NullItem, menuDummy);
+  MenuItem(miHolidayMode, "Urlaubsmodus", miDiagnose, miSettings, miExit, miHolidayActivate, menuDummy);
+    MenuItem(miHolidayActivate, "Urlaubsmodus aktivieren", miHolidayEnddate, Menu::NullItem,    miHolidayMode, Menu::NullItem, menuDummy);
+    MenuItem(miHolidayEnddate,  "Enddatum einstellen",     Menu::NullItem,   miHolidayActivate, miHolidayMode, Menu::NullItem, menuDummy);
+  MenuItem(miDiagnose, "Diagnose", miUber, miHolidayMode, miSettings, miGetDateTime, menuDummy);
+    MenuItem(miGetDateTime, "Datum/Uhrzeit anfordern", miShowTemp, Menu::NullItem, miDiagnose, Menu::NullItem, menuDummy);
+    MenuItem(miShowTemp, "Temperatur anzeigen", miRFTest, miGetDateTime, miDiagnose, miTempInt, menuDummy);
+      MenuItem(miTempInt, "Interner Sensor", miTempExt,      Menu::NullItem, miShowTemp, Menu::NullItem, menuDummy);
+      MenuItem(miTempExt, "Externer Sensor", Menu::NullItem, miTempInt,      miShowTemp, Menu::NullItem, menuDummy);
+    MenuItem(miRFTest, "Funkanbindung testen", miVoltBatt, miShowTemp, miDiagnose, miRFServer, menuDummy);
+      MenuItem(miRFServer, "Server", miRFSensor,     Menu::NullItem, miRFTest, Menu::NullItem, menuDummy);
+      MenuItem(miRFSensor, "Sensor", Menu::NullItem, miRFServer,     miRFTest, Menu::NullItem, menuDummy);
+    MenuItem(miVoltBatt,  "Restspannung Batterie",  miVoltPWM,      miRFTest,   miDiagnose, Menu::NullItem, menuDummy);
+    MenuItem(miVoltPWM,   "Regelspannung anzeigen", miDispTest,     miVoltBatt, miDiagnose, Menu::NullItem, menuDummy);
+    MenuItem(miDispTest,  "Displaytest",            miFactReset,    miVoltPWM,  miDiagnose, Menu::NullItem, menuDummy);
+    MenuItem(miFactReset, "Werkseinstellungen",     Menu::NullItem, miDispTest, miDiagnose, Menu::NullItem, menuDummy);
+  MenuItem(miUber, "Über", Menu::NullItem, miDiagnose, miSettings, Menu::NullItem, menuDummy);
 
 // get temperature from sensor and store it in global variable temperature
 void getTemp() {
