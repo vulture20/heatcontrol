@@ -6,6 +6,7 @@
  */
 
 #include <Time.h>
+#include <SPI.h>
 #include <Wire.h>
 #include <DS1307RTC.h>
 #include <SoftwareSerial.h>
@@ -13,6 +14,8 @@
 #include <EEPROMVar.h>
 #include <tmp102.h>
 #include <ClickEncoder.h>
+#include <Adafruit_SSD1306.h>
+#include <Adafruit_GFX.h>
 #include <Menu.h>
 #include <TimerOne.h>
 #include <avr/wdt.h>
@@ -31,6 +34,7 @@ const int xbeeTXPin = 11;                  // TX Pin for the xbee
 const int encoderAPin = A1;                // Pin A from rotary encoder
 const int encoderBPin = A0;                // Pin B from rotary encoder
 const int encoderButtonPin = A2;           // Button Pin from rotary encoder
+const int oledResetPin = 4;                // OLED Reset Pin
 const uint8_t menuItemsVisible = 3;        // how many items should/could be visible at a time
 const uint8_t menuItemHeight = 12;         // height of one menu item
 
@@ -59,6 +63,7 @@ bool updateMenu = false;
 tmp102 *thermometer = new tmp102(&Wire);
 ClickEncoder *encoder;
 Menu::Engine *engine;
+Adafruit_SSD1306 display(oledResetPin);
 
 /*
  * Timer Definition
@@ -90,11 +95,21 @@ bool menuBack(const Menu::Action_t a) {
   return true;
 }
 
+// renders the given menuitem at the position pos
 void renderMenuItem(const Menu::Item_t *mi, uint8_t pos) {
   uint8_t y = pos * menuItemHeight + 2;
   
   // draw the item
 }
+
+// render the default screen with setpoint and actual temperature
+void renderDefaultScreen() {
+}
+
+/*
+ * Helper-Functions
+ *
+ */
 
 // get temperature from sensor and store it in global variable temperature
 void getTemp() {
@@ -153,6 +168,11 @@ void getDOWSettings(byte DOW) {
   DOWSettings.set2Temp =        EEPROM.readFloat(((DOW - 1) * 16 + 2) + 12);
 }
 
+/*
+ * Arduino-Standard Section
+ *
+ */
+
 // setup
 void setup() {
   wdt_enable(WDTO_8S);
@@ -173,6 +193,9 @@ void setup() {
   encoder->setAccelerationEnabled(false);
   Timer1.initialize(1000);
   Timer1.attachInterrupt(timerIsr);
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3D);
+  display.display();
+  //display.clearDisplay();
 
   engine = new Menu::Engine(&Menu::NullItem);
   menuExit(Menu::actionDisplay); // reset to inital state
