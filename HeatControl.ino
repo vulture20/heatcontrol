@@ -1,9 +1,11 @@
 /*
- * HeatControl v0.1
+ * HeatControl
  * 14.01.2015
  * (C) 2015 by Thorsten Schröpel
  *
  */
+
+#define VERSION "v0.1"
 
 #include <Time.h>
 #include <SPI.h>
@@ -12,13 +14,14 @@
 #include <SoftwareSerial.h>
 #include <EEPROMex.h>
 #include <EEPROMVar.h>
-#include <tmp102.h>
+#include "Adafruit_MCP9808.h"
 #include <ClickEncoder.h>
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_GFX.h>
 #include <Menu.h>
 #include <TimerOne.h>
 #include <avr/wdt.h>
+#include <stdio.h>
 #include "HeatControl.h"
 
 /*
@@ -28,6 +31,7 @@
 
 const byte sensorAddress = 0x90;           // I2C address of the tmp102 sensor
 const unsigned long tempInterval = 15000;  // read temperature only every x ms
+const unsigned long tempExtInterval = 300000; //  mark connection as lost after 5 minutes
 const int pwmPin = 9;                      // Pin for PWM output to heating
 const int xbeeRXPin = 10;                  // RX Pin for the xbee
 const int xbeeTXPin = 11;                  // TX Pin for the xbee
@@ -35,8 +39,8 @@ const int encoderAPin = A1;                // Pin A from rotary encoder
 const int encoderBPin = A0;                // Pin B from rotary encoder
 const int encoderButtonPin = A2;           // Button Pin from rotary encoder
 const int oledResetPin = 4;                // OLED Reset Pin
-const uint8_t menuItemsVisible = 3;        // how many items should/could be visible at a time
-const uint8_t menuItemHeight = 12;         // height of one menu item
+const uint8_t menuItemsVisible = 4;        // how many items should/could be visible at a time
+const uint8_t menuItemHeight = 7;          // height of one menu item
 
 /*
  * Definition of the variables
@@ -47,7 +51,9 @@ SoftwareSerial xbee(xbeeRXPin, xbeeTXPin); // Pins for the serial xbee connectio
 int cmdRecvd = 0;            // is received Command complete?
 String cmd = "";             // received Command
 float temperature = 0.0;     // Buffer for the last read temperature
+float extTemp = 0.0;         // Buffer for the external temperature sensor
 unsigned long tempLast;      // last time the temp was read
+unsigned long tempLastExt;   // last time the external sensor was seen
 sDOWSettings DOWSettings;    // settings for the current day of the week
 uint8_t systemState = State::Default; // current state of the menu
 uint8_t previousSystemState = State::None; // previous state of the menu
@@ -60,7 +66,7 @@ bool updateMenu = false;
  *
  */
 
-tmp102 *thermometer = new tmp102(&Wire);
+Adafruit_MCP9808 tempsensor = Adafruit_MCP9808();
 ClickEncoder *encoder;
 Menu::Engine *engine;
 Adafruit_SSD1306 display(oledResetPin);
@@ -100,10 +106,33 @@ void renderMenuItem(const Menu::Item_t *mi, uint8_t pos) {
   uint8_t y = pos * menuItemHeight + 2;
   
   // draw the item
+  display.setCursor(1, y);
+  if (engine->currentItem == mi) {  
+    display.setTextColor(BLACK, WHITE); // 'inverted' text
+  } else {
+    display.setTextColor(WHITE, BLACK); // 'inverted' text
+  }
+  /*
+  // mark items that have children
+  if (engine->getChild(mi) != &menu::NullItem) {
+    display.print("> ");
+  }
+  */
+  display.println(engine->getLabel(mi));
 }
 
 // render the default screen with setpoint and actual temperature
 void renderDefaultScreen() {
+  char* tmp;
+  
+  displayTemp();
+  display.setTextSize(1);
+  display.setCursor(1, 1);
+  sprintf(tmp, "%s, %2d. %s %4d", weekday(), day(), monthShortStr(month()), year());
+  display.println(tmp);
+  display.setCursor(1, 9);
+  sprintf(tmp, "%-2d:%02d", hour(), minute());
+  display.println(tmp);
 }
 
 /*
@@ -111,14 +140,60 @@ void renderDefaultScreen() {
  *
  */
 
+// display the splash screen with some infos
+void displaySplashScreen() {
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.print(F("HeatControl "));
+  display.println(VERSION);
+  display.println(F("(C)2015 T. Schröpel"));
+  display.display();
+}
+
+// draw the temperature temp at x, y
+void drawTemp(int x, int y, int textSize, float temp) {
+  display.setCursor(x, y);
+  display.setTextSize(textSize);
+  display.print(String(temp, 1));
+  display.println(F("°C"));
+}
+
+// display the various temperatures for the default screen
+void displayTemp() {
+  display.clearDisplay();
+  display.setTextColor(WHITE);
+  drawTemp(52, 1, 2, getActiveDOWSetting() ? DOWSettings.set1Temp : DOWSettings.set2Temp);
+  drawTemp(94, 22, 1, temperature);
+  if (connectionLost) {
+    display.setCursor(94, 22);
+    display.print("-.--°C");
+  } else {
+    drawTemp(94, 30, 1, extTemp);
+  }
+}
+
 // get temperature from sensor and store it in global variable temperature
 void getTemp() {
   int temp = 0;
   
   if (millis()-tempLast > tempInterval) { // only get temperature after tempInterval ms
-    if (thermometer->readTemp(temp)) { // read temperature from sensor
-      temperature = temp * 0.0625; // convert it to °C
-    }
+    temperature = tempsensor.readTempC();
+    tempLast = millis();
+  }
+}
+
+void getExtTemp(String temp) {
+  extTemp = (float)strtod(temp.c_str(), NULL);
+  tempLastExt = millis();
+}
+
+boolean connectionLost() {
+  if (millis()-tempLastExt > tempExtInterval) {
+    return true;
+  } else {
+    return false;
   }
 }
 
@@ -168,6 +243,10 @@ void getDOWSettings(byte DOW) {
   DOWSettings.set2Temp =        EEPROM.readFloat(((DOW - 1) * 16 + 2) + 12);
 }
 
+int getActiveDOWSetting() {
+  return 1; // TODO
+}
+
 /*
  * Arduino-Standard Section
  *
@@ -186,16 +265,22 @@ void setup() {
   if (timeStatus() != timeSet) {
     Serial.println(F("Unable to sync with the RTC"));
   }
-  thermometer->init(sensorAddress);
-  thermometer->writeConf(TMP102_DEFAULT_CONF); // set default config
+  if (!tempsensor.begin()) {
+    Serial.println(F("Couldn't find MCP9808!"));
+    display.setCursor(1, 1);
+    display.println(F("Problem mit Temperatursensor!"));
+    while (1);
+  }
   EEPROM.setMemPool(0, EEPROMSizeATmega328);
   encoder = new ClickEncoder(encoderAPin, encoderBPin, encoderButtonPin);
   encoder->setAccelerationEnabled(false);
   Timer1.initialize(1000);
   Timer1.attachInterrupt(timerIsr);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3D);
-  display.display();
-  //display.clearDisplay();
+  display.setTextWrap(false);
+//  display.display();
+  displaySplashScreen();
+  delay(2000);
 
   engine = new Menu::Engine(&Menu::NullItem);
   menuExit(Menu::actionDisplay); // reset to inital state
@@ -223,6 +308,9 @@ void loop() {
     switch (cmd.charAt(1)) {
       case 'T': // set time according to next 10 ascii digits
                 setRTC(cmd.substring(2, cmd.length()));
+                break;
+      case 'E': // set external temp from sensor
+                getExtTemp(cmd.substring(2, cmd.length()));
                 break;
     }
   }
