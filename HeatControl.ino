@@ -5,7 +5,7 @@
  *
  */
 
-#define VERSION "v0.1"
+#define VERSION "v0.2"
 
 #include <Time.h>
 #include <SPI.h>
@@ -15,10 +15,9 @@
 #include <EEPROMex.h>
 #include <EEPROMVar.h>
 #include "Adafruit_MCP9808.h"
-#include <ClickEncoder.h>
-#include <Adafruit_SSD1306.h>
-#include <Adafruit_GFX.h>
-#include <Menu.h>
+#include <U8glib.h>
+#include <M2tk.h>
+#include "utility/m2ghu8g.h"
 #include <TimerOne.h>
 #include <avr/wdt.h>
 #include <stdio.h>
@@ -38,7 +37,6 @@ const int xbeeTXPin = 11;                  // TX Pin for the xbee
 const int encoderAPin = A1;                // Pin A from rotary encoder
 const int encoderBPin = A0;                // Pin B from rotary encoder
 const int encoderButtonPin = A2;           // Button Pin from rotary encoder
-const int oledResetPin = 4;                // OLED Reset Pin
 const uint8_t menuItemsVisible = 4;        // how many items should/could be visible at a time
 const uint8_t menuItemHeight = 7;          // height of one menu item
 
@@ -57,9 +55,7 @@ unsigned long tempLastExt;   // last time the external sensor was seen
 sDOWSettings DOWSettings;    // settings for the current day of the week
 uint8_t systemState = State::Default; // current state of the menu
 uint8_t previousSystemState = State::None; // previous state of the menu
-int16_t encMovement;
-int16_t encAbsolute;
-bool updateMenu = false;
+bool updateScreen = false;
 
 /*
  * Initialize the objects
@@ -67,63 +63,19 @@ bool updateMenu = false;
  */
 
 Adafruit_MCP9808 tempsensor = Adafruit_MCP9808();
-ClickEncoder *encoder;
-Menu::Engine *engine;
-Adafruit_SSD1306 display(oledResetPin);
-
-/*
- * Timer Definition
- *
- */
-
-void timerIsr() {
-  encoder->service();
-}
+U8GLIB_SH1106_128X64 u8g(13, 11, 10, 9);
+//U8GLIB_SH1106_128X64 u8g(U8G_I2C_OPT_NONE);
+//M2tk m2(&el_top, m2_es_arduino_rotary_encoder, m2_eh_4bs, m2_gh_u8g_ffs);
+M2tk m2(&el_top, m2_es_arduino_serial, m2_eh_2bs, m2_gh_arduino_serial);
 
 /*
  * Menu Section
  *
  */
 
-bool menuExit(const Menu::Action_t a) {
-  systemState = State::Default;
-  return true;
-}
-
-bool menuDummy(const Menu::Action_t a) {
-  return true;
-}
-
-bool menuBack(const Menu::Action_t a) {
-  if (a == Menu::actionDisplay) {
-    engine->navigate(engine->getParent(engine->getParent()));
-  }
-  return true;
-}
-
-// renders the given menuitem at the position pos
-void renderMenuItem(const Menu::Item_t *mi, uint8_t pos) {
-  uint8_t y = pos * menuItemHeight + 2;
-  
-  // draw the item
-  display.setCursor(1, y);
-  if (engine->currentItem == mi) {  
-    display.setTextColor(BLACK, WHITE); // 'inverted' text
-  } else {
-    display.setTextColor(WHITE, BLACK); // 'inverted' text
-  }
-  /*
-  // mark items that have children
-  if (engine->getChild(mi) != &menu::NullItem) {
-    display.print("> ");
-  }
-  */
-  display.println(engine->getLabel(mi));
-}
-
 // render the default screen with setpoint and actual temperature
-void renderDefaultScreen() {
-  char* tmp;
+uint8_t renderDefaultScreen() {
+/*  char* tmp;
   
   displayTemp();
   display.setTextSize(1);
@@ -132,7 +84,19 @@ void renderDefaultScreen() {
   display.println(tmp);
   display.setCursor(1, 9);
   sprintf(tmp, "%-2d:%02d", hour(), minute());
-  display.println(tmp);
+  display.println(tmp);*/
+  return updateScreen;
+}
+
+void draw(void) {
+  m2.draw();
+}
+
+// update graphics, will return non-zero if an update is required
+uint8_t update_graphics(void) {
+  if (m2.getRoot() == &m2_null_element) {
+    return renderDefaultScreen();
+  }
 }
 
 /*
@@ -142,27 +106,27 @@ void renderDefaultScreen() {
 
 // display the splash screen with some infos
 void displaySplashScreen() {
-  display.clearDisplay();
+/*  display.clearDisplay();
   display.setCursor(0, 0);
   display.setTextSize(1);
   display.setTextColor(WHITE);
   display.print(F("HeatControl "));
   display.println(VERSION);
   display.println(F("(C)2015 T. Schröpel"));
-  display.display();
+  display.display();*/
 }
 
 // draw the temperature temp at x, y
 void drawTemp(int x, int y, int textSize, float temp) {
-  display.setCursor(x, y);
+/*  display.setCursor(x, y);
   display.setTextSize(textSize);
   display.print(String(temp, 1));
-  display.println(F("°C"));
+  display.println(F("°C"));*/
 }
 
 // display the various temperatures for the default screen
 void displayTemp() {
-  display.clearDisplay();
+/*  display.clearDisplay();
   display.setTextColor(WHITE);
   drawTemp(52, 1, 2, getActiveDOWSetting() ? DOWSettings.set1Temp : DOWSettings.set2Temp);
   drawTemp(94, 22, 1, temperature);
@@ -171,7 +135,7 @@ void displayTemp() {
     display.print("-.--°C");
   } else {
     drawTemp(94, 30, 1, extTemp);
-  }
+  }*/
 }
 
 // get temperature from sensor and store it in global variable temperature
@@ -181,6 +145,7 @@ void getTemp() {
   if (millis()-tempLast > tempInterval) { // only get temperature after tempInterval ms
     temperature = tempsensor.readTempC();
     tempLast = millis();
+    updateScreen = true;
   }
 }
 
@@ -263,35 +228,37 @@ void setup() {
   cmd.reserve(30); // reserve 30 bytes for the command string
   setSyncProvider(RTC.get);
   if (timeStatus() != timeSet) {
-    Serial.println(F("Unable to sync with the RTC"));
+    Serial.println(("Unable to sync with the RTC"));
   }
   if (!tempsensor.begin()) {
-    Serial.println(F("Couldn't find MCP9808!"));
-    display.setCursor(1, 1);
-    display.println(F("Problem mit Temperatursensor!"));
+    Serial.println(("Couldn't find MCP9808!"));
+/*    display.setCursor(1, 1);
+    display.println(F("Problem mit Temperatursensor!"));*/
     while (1);
   }
   EEPROM.setMemPool(0, EEPROMSizeATmega328);
-  encoder = new ClickEncoder(encoderAPin, encoderBPin, encoderButtonPin);
-  encoder->setAccelerationEnabled(false);
-  Timer1.initialize(1000);
-  Timer1.attachInterrupt(timerIsr);
-  display.begin(SSD1306_SWITCHCAPVCC, 0x3D);
-  display.setTextWrap(false);
-//  display.display();
   displaySplashScreen();
   delay(2000);
 
-  engine = new Menu::Engine(&Menu::NullItem);
-  menuExit(Menu::actionDisplay); // reset to inital state
-  
-  xbee.println(F("HC connect")); // send status info
+  // connect u8glib with m2tklib
+  m2_SetU8g(u8g.getU8g(), m2_u8g_box_icon);
+  // assign u8g font to index 0
+  m2.setFont(0, u8g_font_7x13r);
+  // define button for the select message
+  m2.setPin(M2_KEY_SELECT, encoderButtonPin);
+  // the incremental rotary encoder is connected to these two pins
+  m2.setPin(M2_KEY_ROT_ENC_A, encoderAPin);
+  m2.setPin(M2_KEY_ROT_ENC_B, encoderBPin);
+
+  xbee.println(("HC connect")); // send status info
 }
 
 // loop
 void loop() {
   wdt_reset();    // reset the watchdog timeout
   getTemp();      // get the current temperature
+
+  m2.checkKey();
 
   // handle the xbee communication
   if (xbee.available()) {
@@ -302,6 +269,8 @@ void loop() {
       cmd += inChar;
     }
   }
+
+  m2.checkKey();
 
   // execute the command buffer
   if (cmdRecvd == 1) {
@@ -314,53 +283,18 @@ void loop() {
                 break;
     }
   }
-  
-  // handle encoder
-  encMovement = encoder->getValue();
-  if (encMovement) {
-    encAbsolute += encMovement;
-    
-    if (systemState == State::Settings) {
-      engine->navigate((encMovement > 0) ? engine->getNext() : engine->getPrev());
-      updateMenu = true;
-    }
+
+  // menu management
+  m2.checkKey();
+  if (m2.handleKey() != 0 || update_graphics() != 0) {
+    updateScreen = false;
+    u8g.firstPage();
+    do {
+      m2.checkKey();
+      draw();
+    } while (u8g.nextPage());
   }
-  
-  // handle button
-  switch (encoder->getButton()) {
-    case ClickEncoder::Clicked:
-      if (systemState == State::Settings) {
-        engine->invoke();
-        updateMenu = true;
-      }
-      break;
-  }
-  if (updateMenu) {
-    updateMenu = false;
-    
-    if (!encMovement) { // clear menu on child/parent navigation
-      // clear display
-    }
-    
-    // simple scrollbar
-    Menu::Info_t mi = engine->getItemInfo(engine->currentItem);
-    uint8_t sbTop = 0, sbWidth = 4, sbLeft = 100;
-    uint8_t sbItems = minValue(menuItemsVisible, mi.siblings);
-    uint8_t sbHeight = sbItems * menuItemHeight;
-    uint8_t sbMarkHeight = sbHeight * sbItems / mi.siblings;
-    uint8_t sbMarkTop = ((sbHeight - sbMarkHeight) / mi.siblings) * (mi.position - 1);
-    // tft.fillRect(sbLeft, sbTop, sbWidth, sbHeight, WHITE);
-    // tft.fillRect(sbLeft, sbMarkTop, sbWidth, sbMarkHeight, RED);
-    
-    // render the menu
-    engine->render(renderMenuItem, menuItemsVisible);
-    
-    // temperature screen
-    if (systemState == State::Default) {
-      if (systemState != previousSystemState) {
-        previousSystemState = systemState;
-        // render temp screen
-      }
-    }
+  if ((m2.getRoot() == &m2_null_element)&&(m2.getKey() != M2_KEY_NONE)) {
+    m2.setRoot(&el_top);
   }
 }
